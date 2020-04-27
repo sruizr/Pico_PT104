@@ -1,6 +1,6 @@
-# -*- coding: utf-8 -*-
 """ A Wrapper around the usbpt104 library from Pico for the Pico PT-104A RTD DATA Acquisition Module
 
+# -*- coding: utf-8 -*-
 It also works for the Omega PT-104A.
 
 Based on Code from:
@@ -16,30 +16,36 @@ https://www.picotech.com/download/manuals/usb-pt104-rtd-data-logger-programmers-
 Example::
 
     from PT104 import PT104, Channels, DataTypes, Wires
+    from PT104.usb import USBinterface
+
+    interface = USBinterface()
     unit = PT104()
+    unit.interface = interface
+
     unit.connect('AY429/026')
-    unit.set_channel(Channels.CHANNEL_1, DataTypes.PT100, Wires.WIRES_4)
-    value = unit.get_value_channel_1
+    unit.channels[1].data_type = DataTypes.PT100
+    unit.channels[1].wires = Wires.WIRES_4
+    unit.convert()
+
+    value = unit.channels[1].value
     if value:
         print('CH1: %1.3f'%value)
     unit.disconnect()
-
 
 """
 __author__ = "Martin Schröder"
 __copyright__ = "Copyright 2018, Technische Universität Berlin"
 __credits__ = []
 __license__ = "GPLv3"
-__version__ = "1.0.0"
-__maintainer__ = "Martin Schröder"
+__version__ = "2.0.0"
+__maintainer__ = "Salvador Ruiz"
 __email__ = "m.schroeder@tu-berlin.de"
 __status__ = "Beta"
 __docformat__ = 'reStructuredText'
 
-from ctypes import *
-from ctypes.util import find_library
+
+import time
 from enum import IntEnum
-from time import time
 
 
 class CtypesEnum(IntEnum):
@@ -94,122 +100,316 @@ class PicoInfo(CtypesEnum):
     PICO_BATCH_AND_SERIAL = 4
     PICO_CAL_DATE = 5
     PICO_KERNEL_DRIVER_VERSION = 6
+    PICO_MAC_ADDRESS = 7
 
 
-# load the shared library
-lib_path = find_library('usbpt104')
-if lib_path is None:
-    raise OSError('shared library usbpt104 not found')
-else:
-    libusbpt104 = cdll.LoadLibrary(lib_path)
+class PicoStatus(CtypesEnum):
+    PICO_OK = 0x00000000
+    PICO_MAX_UNITS_OPENED = 0x00000001
+    PICO_MEMORY_FAIL = 0x00000002
+    PICO_NOT_FOUND = 0x00000003
+    PICO_FW_FAIL = 0x00000004
+    PICO_OPEN_OPERATION_IN_PROGRESS = 0x00000005
+    PICO_OPERATION_FAILED = 0x00000006
+    PICO_NOT_RESPONDING = 0x00000007
+    PICO_CONFIG_FAIL = 0x00000008
+    PICO_KERNEL_DRIVER_TOO_OLD = 0x00000009
+    PICO_EEPROM_CORRUPT = 0x0000000A
+    PICO_OS_NOT_SUPPORTED = 0x0000000B
+    PICO_INVALID_HANDLE = 0x0000000C
+    PICO_INVALID_PARAMETER = 0x0000000D
+    PICO_INVALID_TIMEBASE = 0x0000000E
+    PICO_INVALID_VOLTAGE_RANGE = 0x0000000F
+    PICO_INVALID_CHANNEL = 0x00000010
+    PICO_INVALID_TRIGGER_CHANNEL = 0x00000011
+    PICO_INVALID_CONDITION_CHANNEL = 0x00000012
+    PICO_NO_SIGNAL_GENERATOR = 0x00000013
+    PICO_STREAMING_FAILED = 0x00000014
+    PICO_BLOCK_MODE_FAILED = 0x00000015
+    PICO_NULL_PARAMETER = 0x00000016
+    PICO_ETS_MODE_SET = 0x00000017
+    PICO_DATA_NOT_AVAILABLE = 0x00000018
+    PICO_STRING_BUFFER_TO_SMALL = 0x00000019
+    PICO_ETS_NOT_SUPPORTED = 0x0000001A
+    PICO_AUTO_TRIGGER_TIME_TO_SHORT = 0x0000001B
+    PICO_BUFFER_STALL = 0x0000001C
+    PICO_TOO_MANY_SAMPLES = 0x0000001D
+    PICO_TOO_MANY_SEGMENTS = 0x0000001E
+    PICO_PULSE_WIDTH_QUALIFIER = 0x0000001F
+    PICO_DELAY = 0x00000020
+    PICO_SOURCE_DETAILS = 0x00000021
+    PICO_CONDITIONS = 0x00000022
+    PICO_USER_CALLBACK = 0x00000023
+    PICO_DEVICE_SAMPLING = 0x00000024
+    PICO_NO_SAMPLES_AVAILABLE = 0x00000025
+    PICO_SEGMENT_OUT_OF_RANGE = 0x00000026
+    PICO_BUSY = 0x00000027
+    PICO_STARTINDEX_INVALID = 0x00000028
+    PICO_INVALID_INFO = 0x00000029
+    PICO_INFO_UNAVAILABLE = 0x0000002A
+    PICO_INVALID_SAMPLE_INTERVAL = 0x0000002B
+    PICO_TRIGGER_ERROR = 0x0000002C
+    PICO_MEMORY = 0x0000002D
+    PICO_SIG_GEN_PARAM = 0x0000002E
+    PICO_SHOTS_SWEEPS_WARNING = 0x0000002F
+    PICO_SIGGEN_TRIGGER_SOURCE = 0x00000030
+    PICO_AUX_OUTPUT_CONFLICT = 0x00000031
+    PICO_AUX_OUTPUT_ETS_CONFLICT = 0x00000032
+    PICO_WARNING_EXT_THRESHOLD_CONFLICT = 0x00000033
+    PICO_WARNING_AUX_OUTPUT_CONFLICT = 0x00000034
+    PICO_SIGGEN_OUTPUT_OVER_VOLTAGE = 0x00000035
+    PICO_DELAY_NULL = 0x00000036
+    PICO_INVALID_BUFFER = 0x00000037
+    PICO_SIGGEN_OFFSET_VOLTAGE = 0x00000038
+    PICO_SIGGEN_PK_TO_PK = 0x00000039
+    PICO_CANCELLED = 0x0000003A
+    PICO_SEGMENT_NOT_USED = 0x0000003B
+    PICO_INVALID_CALL = 0x0000003C
+    PICO_GET_VALUES_INTERRUPTED = 0x0000003D
+    PICO_NOT_USED = 0x0000003F
+    PICO_INVALID_SAMPLERATIO = 0x00000040
+    PICO_INVALID_STATE = 0x00000041
+    PICO_NOT_ENOUGH_SEGMENTS = 0x00000042
+    PICO_DRIVER_FUNCTION = 0x00000043
+    PICO_RESERVED = 0x00000044
+    PICO_INVALID_COUPLING = 0x00000045
+    PICO_BUFFERS_NOT_SET = 0x00000046
+    PICO_RATIO_MODE_NOT_SUPPORTED = 0x00000047
+    PICO_RAPID_NOT_SUPPORT_AGGREGATION = 0x00000048
+    PICO_INVALID_TRIGGER_PROPERTY = 0x00000049
+    PICO_INTERFACE_NOT_CONNECTED = 0x0000004A
+    PICO_RESISTANCE_AND_PROBE_NOT_ALLOWED = 0x0000004B
+    PICO_POWER_FAILED = 0x0000004C
+    PICO_SIGGEN_WAVEFORM_SETUP_FAILED = 0x0000004D
+    PICO_FPGA_FAIL = 0x0000004E
+    PICO_POWER_MANAGER = 0x0000004F
+    PICO_INVALID_ANALOGUE_OFFSET = 0x00000050
+    PICO_PLL_LOCK_FAILED = 0x00000051
+    PICO_ANALOG_BOARD = 0x00000052
+    PICO_CONFIG_FAIL_AWG = 0x00000053
+    PICO_INITIALISE_FPGA = 0x00000054
+    PICO_EXTERNAL_FREQUENCY_INVALID = 0x00000056
+    PICO_CLOCK_CHANGE_ERROR = 0x00000057
+    PICO_TRIGGER_AND_EXTERNAL_CLOCK_CLASH = 0x00000058
+    PICO_PWQ_AND_EXTERNAL_CLOCK_CLASH = 0x00000059
+    PICO_UNABLE_TO_OPEN_SCALING_FILE = 0x0000005A
+    PICO_MEMORY_CLOCK_FREQUENCY = 0x0000005B
+    PICO_I2C_NOT_RESPONDING = 0x0000005C
+    PICO_NO_CAPTURES_AVAILABLE = 0x0000005D
+    PICO_NOT_USED_IN_THIS_CAPTURE_MODE = 0x0000005E
+    PICO_TOO_MANY_TRIGGER_CHANNELS_IN_USE = 0x0000005F
+    PICO_INVALID_TRIGGER_DIRECTION = 0x00000060
+    PICO_INVALID_TRIGGER_STATES = 0x00000061
+    PICO_GET_DATA_ACTIVE = 0x00000103
+    PICO_IP_NETWORKED = 0x00000104
+    PICO_INVALID_IP_ADDRESS = 0x00000105
+    PICO_IPSOCKET_FAILED = 0x00000106
+    PICO_IPSOCKET_TIMEDOUT = 0x00000107
+    PICO_SETTINGS_FAILED = 0x00000108
+    PICO_NETWORK_FAILED = 0x00000109
+    PICO_WS2_32_DLL_NOT_LOADED = 0x0000010A
+    PICO_INVALID_IP_PORT = 0x0000010B
+    PICO_COUPLING_NOT_SUPPORTED = 0x0000010C
+    PICO_BANDWIDTH_NOT_SUPPORTED = 0x0000010D
+    PICO_INVALID_BANDWIDTH = 0x0000010E
+    PICO_AWG_NOT_SUPPORTED = 0x0000010F
+    PICO_ETS_NOT_RUNNING = 0x00000110
+    PICO_SIG_GEN_WHITENOISE_NOT_SUPPORTED = 0x00000111
+    PICO_SIG_GEN_WAVETYPE_NOT_SUPPORTED = 0x00000112
+    PICO_INVALID_DIGITAL_PORT = 0x00000113
+    PICO_INVALID_DIGITAL_CHANNEL = 0x00000114
+    PICO_INVALID_DIGITAL_TRIGGER_DIRECTION = 0x00000115
+    PICO_SIG_GEN_PRBS_NOT_SUPPORTED = 0x00000116
+    PICO_ETS_NOT_AVAILABLE_WITH_LOGIC_CHANNELS = 0x00000117
+    PICO_WARNING_REPEAT_VALUE = 0x00000118
+    PICO_POWER_SUPPLY_CONNECTED = 0x00000119
+    PICO_POWER_SUPPLY_NOT_CONNECTED = 0x0000011A
+    PICO_POWER_SUPPLY_REQUEST_INVALID = 0x0000011B
+    PICO_POWER_SUPPLY_UNDERVOLTAGE = 0x0000011C
+    PICO_CAPTURING_DATA = 0x0000011D
+    PICO_USB3_0_DEVICE_NON_USB3_0_PORT = 0x0000011E
+    PICO_NOT_SUPPORTED_BY_THIS_DEVICE = 0x0000011F
+    PICO_INVALID_DEVICE_RESOLUTION = 0x00000120
+    PICO_INVALID_NUMBER_CHANNELS_FOR_RESOLUTION = 0x00000121
+    PICO_CHANNEL_DISABLED_DUE_TO_USB_POWERED = 0x00000122
+    PICO_SIGGEN_DC_VOLTAGE_NOT_CONFIGURABLE = 0x00000123
+    PICO_NO_TRIGGER_ENABLED_FOR_TRIGGER_IN_PRE_TRIG = 0x00000124
+    PICO_TRIGGER_WITHIN_PRE_TRIG_NOT_ARMED = 0x00000125
+    PICO_TRIGGER_WITHIN_PRE_NOT_ALLOWED_WITH_DELAY = 0x00000126
+    PICO_TRIGGER_INDEX_UNAVAILABLE = 0x00000127
+    PICO_AWG_CLOCK_FREQUENCY = 0x00000128
+    PICO_TOO_MANY_CHANNELS_IN_USE = 0x00000129
+    PICO_NULL_CONDITIONS = 0x0000012A
+    PICO_DUPLICATE_CONDITION_SOURCE = 0x0000012B
+    PICO_INVALID_CONDITION_INFO = 0x0000012C
+    PICO_SETTINGS_READ_FAILED = 0x0000012D
+    PICO_SETTINGS_WRITE_FAILED = 0x0000012E
+    PICO_ARGUMENT_OUT_OF_RANGE = 0x0000012F
+    PICO_HARDWARE_VERSION_NOT_SUPPORTED = 0x00000130
+    PICO_DIGITAL_HARDWARE_VERSION_NOT_SUPPORTED = 0x00000131
+    PICO_ANALOGUE_HARDWARE_VERSION_NOT_SUPPORTED = 0x00000132
+    PICO_UNABLE_TO_CONVERT_TO_RESISTANCE = 0x00000133
+    PICO_DUPLICATED_CHANNEL = 0x00000134
+    PICO_INVALID_RESISTANCE_CONVERSION = 0x00000135
+    PICO_INVALID_VALUE_IN_MAX_BUFFER = 0x00000136
+    PICO_INVALID_VALUE_IN_MIN_BUFFER = 0x00000137
+    PICO_SIGGEN_FREQUENCY_OUT_OF_RANGE = 0x00000138
+    PICO_EEPROM2_CORRUPT = 0x00000139
+    PICO_EEPROM2_FAIL = 0x0000013A
+    PICO_SERIAL_BUFFER_TOO_SMALL = 0x0000013B
+    PICO_SIGGEN_TRIGGER_AND_EXTERNAL_CLOCK_CLASH = 0x0000013C
+    PICO_WARNING_SIGGEN_AUXIO_TRIGGER_DISABLED = 0x0000013D
+    PICO_SIGGEN_GATING_AUXIO_NOT_AVAILABLE = 0x00000013E
+    PICO_SIGGEN_GATING_AUXIO_ENABLED = 0x00000013F
+    PICO_DEVICE_TIME_STAMP_RESET = 0x01000000
+    PICO_WATCHDOGTIMER = 0x10000000
+    PICO_IPP_NOT_FOUND = 0x10000001
+    PICO_IPP_ERROR = 0x10000003
+    PICO_IPP_NO_FUNCTION = 0x10000002
+    PICO_SHADOW_CAL_NOT_AVAILABLE = 0x10000004
+    PICO_SHADOW_CAL_DISABLED = 0x10000005
+    PICO_SHADOW_CAL_ERROR = 0x10000006
+    PICO_SHADOW_CAL_CORRUPT = 0x10000007
 
-    # define function argument types
-    # Close the port (do this each time you finish using the device!)
-    libusbpt104.UsbPt104CloseUnit.argtypes = [c_short]
-    # This function returns a list of all the attached PT-104 devices of the specified port type
-    libusbpt104.UsbPt104Enumerate.argtypes = [POINTER(c_char), POINTER(c_ulong), CommunicationType]
 
-    # This function obtains information on a specified device.
-    libusbpt104.UsbPt104GetUnitInfo.argtypes = [c_short, POINTER(c_char), c_short, POINTER(c_short), PicoInfo]
+class PicoException(Exception):
+    def __init__(self, status_code, deviceid, more_info=None):
+        self.status = PicoStatus(status_code)
+        self.deviceid = deviceid
+        self.more_info = more_info
 
-    # Get the most recent data reading from a channel.
-    libusbpt104.UsbPt104GetValue.argtypes = [c_short, Channels, POINTER(c_long), c_short]
-
-    # Open the device through its USB interface.
-    libusbpt104.UsbPt104OpenUnit.argtypes = [POINTER(c_short), POINTER(c_char)]
-
-    # Specify the sensor type and filtering for a channel.
-    libusbpt104.UsbPt104SetChannel.argtypes = [c_short, Channels, DataTypes, c_short]
-
-    # This function is used to inform the driver of the local mains (line) frequency. This helps the driver to filter
-    # out electrical noise.
-    libusbpt104.UsbPt104SetMains.argtypes = [c_short, c_ushort]
+        message = f'Device "{self.deviceid}" has raised {self.status.name}'
+        if more_info:
+            message += f', {more_info}'
+        super().__init__(message)
 
 
-class PT104(object):
-    def __init__(self):
-        self.channels = {Channels.CHANNEL_1: {'data_type': DataTypes.OFF,
-                                              'nb_wires': Wires.WIRES_4,
-                                              'low_pass_filter': False,
-                                              'value': c_long(0),
-                                              'last_query': time()},
-                         Channels.CHANNEL_2: {'data_type': DataTypes.OFF,
-                                              'nb_wires': Wires.WIRES_4,
-                                              'low_pass_filter': False,
-                                              'value': c_long(0),
-                                              'last_query': time()},
-                         Channels.CHANNEL_3: {'data_type': DataTypes.OFF,
-                                              'nb_wires': Wires.WIRES_4,
-                                              'low_pass_filter': False,
-                                              'value': c_long(0),
-                                              'last_query': time()},
-                         Channels.CHANNEL_4: {'data_type': DataTypes.OFF,
-                                              'nb_wires': Wires.WIRES_4,
-                                              'low_pass_filter': False,
-                                              'value': c_long(0),
-                                              'last_query': time()}}
-        self._handle = None
+class Channel:
+    _UNITS = {
+        DataTypes.OFF: '',
+        DataTypes.PT100: '°C',
+        DataTypes.PT1000: '°C',
+        DataTypes.RESISTANCE_TO_375R: 'mOhm',
+        DataTypes.RESISTANCE_TO_10K: 'mOhm',
+        DataTypes.DIFFERENTIAL_TO_115MV: 'mV',
+        DataTypes.DIFFERENTIAL_TO_2500MV: 'mV',
+        DataTypes.SINGLE_ENDED_TO_115MV: 'mV',
+        DataTypes.SINGLE_ENDED_TO_2500MV: 'mV'
+    }
 
-    @staticmethod
-    def discover_devices(communication_type=CommunicationType.CT_USB):
-        """This function returns a list of all the attached PT-104 devices of the specified port type
+    def __init__(self, logger, number,
+                 data_type=DataTypes.OFF,
+                 wires=Wires.WIRES_2,
+                 low_pass_filter=False):
+        self.logger = logger
+        self.number = number
 
-        :param communication_type: type of the devices to discover (COMMUNICATION_TYPE)
-        :return: string
-        """
-        enum_len = c_ulong(256)
-        enum_string = create_string_buffer(256)
-
-        libusbpt104.UsbPt104Enumerate(enum_string, enum_len, communication_type)
-        return enum_string.value
+        self._data_type = data_type
+        self._wires = wires
+        self.low_pass_filter = low_pass_filter
+        self._updated = False
+        self._last_query = None
 
     @property
-    def get_unit_info(self, print_result=True):
+    def data_type(self):
+        return self._data_type
+
+    @data_type.setter
+    def data_type(self, value):
+        if self._data_type != value:
+            self._updated = False
+            self._data_type = value
+
+    @property
+    def wires(self):
+        return self._wires
+
+    @wires.setter
+    def wires(self, value):
+        if self._wires != value:
+            self._updated = False
+            self._wires = value
+
+    @property
+    def units(self):
+        return self._UNITS[self.data_type]
+
+    @property
+    def value(self):
+        if not self._updated:
+            raise PicoException(
+                PicoStatus.PICO_INVALID_CHANNEL, self.logger.id,
+                f'Channel: {self.number}'
+            )
+
+        if self.data_type == DataTypes.OFF:
+            raise PicoException(
+                PicoStatus.PICO_NO_SAMPLES_AVAILABLE, self.logger.id,
+                f'Channel: {self.number}'
+            )
+
+        self._wait_for_conversion()
+
+        value = self.logger.get_value(self.number, self.low_pass_filter)
+        return value * self._factor()
+
+    def updated(self):
+        self._updated = True
+        self._last_query = time.time()
+
+    def _wait_for_conversion(self):
+        """wait until the adc cionversion is finished
+
+        :param channel: channel number (Channels)
+        :return:
+        """
+        conversion_time = self.logger.active_channel_count * 0.75
+        while self._last_query + conversion_time > time.time():
+            time.sleep(0.001)
+        self._last_query = time.time()
+
+    def _factor(self):
+        """scales the value from the device.
+
+        :param value: value to convert as float
+        :param channel: channel number (Channels)
+        :return: Temperature in °C, Resistance in mOhm, Voltage in mV
+        """
+        if self.data_type in [DataTypes.PT100, DataTypes.PT1000,
+                              DataTypes.RESISTANCE_TO_375R]:
+            return 1E-3
+        if self.data_type == DataTypes.RESISTANCE_TO_10K:
+            return 1.0
+        if self.data_type in [DataTypes.DIFFERENTIAL_TO_115MV,
+                              DataTypes.SINGLE_ENDED_TO_115MV]:
+            return 1E-9  # mV
+        if self.data_type in [DataTypes.DIFFERENTIAL_TO_2500MV,
+                              DataTypes.SINGLE_ENDED_TO_2500MV]:
+            return 1E-8  # mV
+
+
+class PT104:
+    def __init__(self, interface=None):
+        self.interface = interface
+        self.channels = {
+            key: Channel(self, key)
+            for key in [1, 2, 3, 4]
+        }
+        self.id = None
+        self._info = {}
+
+        self.is_converting = False
+
+    @property
+    def info(self):
         """This function obtains information on a specified device.
 
         :param print_result: also print the unit info to the console
         :return: the unit info as dict
         """
-        if not self.is_connected:
-            return None
-        info_len = c_short(256)
-        info_string = create_string_buffer(256)
-        req_len = c_short()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len),
-                                        PicoInfo.PICO_DRIVER_VERSION)
-        driver_version = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len), PicoInfo.PICO_USB_VERSION)
-        usb_version = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len),
-                                        PicoInfo.PICO_HARDWARE_VERSION)
-        hardware_version = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len),
-                                        PicoInfo.PICO_VARIANT_INFO)
-        variant_info = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len),
-                                        PicoInfo.PICO_BATCH_AND_SERIAL)
-        batch_and_serial = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len), PicoInfo.PICO_CAL_DATE)
-        cal_date = info_string.value.decode()
-        libusbpt104.UsbPt104GetUnitInfo(self._handle, info_string, info_len, byref(req_len),
-                                        PicoInfo.PICO_KERNEL_DRIVER_VERSION)
-        kernel_driver_version = info_string.value.decode()
-        if print_result:
-            print('driver_version: %s' % driver_version)
-            print('usb_version: %s' % usb_version)
-            print('hardware_version:  %s' % hardware_version)
-            print('variant_info: %s' % variant_info)
-            print('batch_and_serial: %s' % batch_and_serial)
-            print('cal_date: %s' % cal_date)
-            print('kernel_driver_version: %s' % kernel_driver_version)
-
-        return dict(driver_version=driver_version,
-                    usb_version=usb_version,
-                    hardware_version=hardware_version,
-                    variant_info=variant_info,
-                    batch_and_serial=batch_and_serial,
-                    cal_date=cal_date,
-                    kernel_driver_version=kernel_driver_version)
+        if not self._info:
+            self._info = self.interface.get_info(self.id)
+        return self._info
 
     @property
     def is_connected(self):
@@ -217,9 +417,9 @@ class PT104(object):
 
         :return: connection status
         """
-        return self._handle is not None
+        return self.id is not None
 
-    def connect(self, serial=b'', interface=CommunicationType.CT_USB):
+    def connect(self, conn_string=None):
         """Connect to a PT-104A data acquisition module via USB or Ethernet
 
         .. note:: Ethernet connection is not implemented
@@ -227,29 +427,8 @@ class PT104(object):
         :param serial: serial number of the device
         :return: connection status
         """
-        if interface == CommunicationType.CT_ALL:
-            raise ValueError('interface must be either CommunicationType.CT_USB or CommunicationType.CT_ETHERNET')
 
-        if interface == CommunicationType.CT_ETHERNET:
-            raise NotImplementedError('interface CommunicationType.CT_ETHERNET is not implemented jet')
-
-        if self.is_connected:
-            self.disconnect()
-
-        self._handle = c_short()
-
-        if type(serial) is str:
-            serial = serial.encode()
-        status_unit = libusbpt104.UsbPt104OpenUnit(byref(self._handle), serial)
-        if status_unit == 0:
-            print('Picolog PT104 opened successfully')
-            _ = self.get_unit_info
-            self.set_channels()
-            return True
-        else:
-            print('>>>> Picolog ERROR opening device <<<<')
-            self._handle = None
-            return status_unit
+        self.id = self.interface.open_unit(conn_string)
 
     @property
     def active_channel_count(self):
@@ -257,12 +436,8 @@ class PT104(object):
 
         :return: number of active channels
         """
-        n = 0
-        for channel, conf in self.channels.items():
-            if conf['data_type'] == DataTypes.OFF:
-                continue
-            n += 1
-        return n
+        return sum([channel.data_type != DataTypes.OFF
+                    for channel in self.channels.values()])
 
     def disconnect(self):
         """disconnect from the unit
@@ -270,88 +445,34 @@ class PT104(object):
         :return:
         """
         if not self.is_connected:
-            return False
-        libusbpt104.UsbPt104CloseUnit(self._handle)
-        self._handle = None
-        return True
+            return
 
-    def set_channel(self, channel, data_type, nb_wires, low_pass_filter=False):
-        """writes the channel configuration to self.channels and the device.
+        self.interface.close_unit(self.id)
+        self.id = None
+        self._info = {}
 
-        :param channel: channel number (Channels)
-        :param data_type: data type of the connected probe (DataType)
-        :param nb_wires: number of wires (Wires)
-        :param low_pass_filter: use the low pass filter [True, False]
-        :return: status
-        """
-        self.channels[channel]['data_type'] = data_type
-        self.channels[channel]['nb_wires'] = nb_wires
-        self.channels[channel]['low_pass_filter'] = low_pass_filter
-        if not self.is_connected:
-            # change config only
-            return False
-
-        cs = libusbpt104.UsbPt104SetChannel(self._handle,
-                                            channel,
-                                            data_type,
-                                            nb_wires)
-        return cs
-
-    def set_channels(self):
-        """sets the channel configuration from self.channels
-        """
-        for channel, conf in self.channels.items():
-            self.set_channel(channel, conf['data_type'], conf['nb_wires'])
-
-    def get_value(self, channel, raw_value=False):
-        """queries the measurement value from the unit
+    def get_value(self, channel, lower_pass_filter=False):
+        """queries the measurement value directly from inteface
 
         :param channel: channel number (Channels)
         :param raw_value: skip conversion
         :return: measured value
         """
         if not self.is_connected:
-            return None
-        self._wait_for_conversion(channel)
-        status_channel = libusbpt104.UsbPt104GetValue(self._handle,
-                                                      channel,
-                                                      byref(self.channels[channel]['value']),
-                                                      self.channels[channel]['low_pass_filter'])
-        self.channels[channel]['last_query'] = time()
-        if status_channel == 0:
-            if raw_value:
-                return float(self.channels[channel]['value'].value)
-            return self.scale_value(float(self.channels[channel]['value'].value), channel)
-        else:
-            return None
+            raise PicoException(PicoStatus.PICO_NOT_FOUND, self.id)
+        if not self.is_converting:
+            self.convert()
 
-    @property
-    def get_value_channel_1(self):
-        """queries the measurement value from channel 1
-        :return: scaled measured value
-        """
-        return self.get_value(Channels.CHANNEL_1)
+        return self.interface.get_value(self.id, channel,
+                                        lower_pass_filter)
 
-    @property
-    def get_value_channel_2(self):
-        """queries the measurement value from channel 2
-        :return: scaled measured value
-        """
-        return self.get_value(Channels.CHANNEL_2)
-
-    @property
-    def get_value_channel_3(self):
-        """queries the measurement value from channel 3
-        :return: scaled measured value
-        """
-        return self.get_value(Channels.CHANNEL_3)
-
-    @property
-    def get_value_channel_4(self):
-        """queries the measurement value from channel 4
-        :return: scaled measured value
-        """
-        return self.get_value(Channels.CHANNEL_4)
+    def convert(self):
+        self.interface.convert(self.id, self.channels.values())
+        for channel in self.channels.values():
+            channel.updated()
+        self.is_converting = True
+        print(f'Active channels are {self.active_channel_count}')
+        time.sleep(1.5 * self.active_channel_count)
 
     def set_mains(self, sixty_hertz=False):
         """This function is used to inform the driver of the local mains (line) frequency.
@@ -361,40 +482,4 @@ class PT104(object):
         :param sixty_hertz: mains frequency is sixty
         :return: success
         """
-        if sixty_hertz:
-            sixty_hertz = c_ushort(1)
-        else:
-            sixty_hertz = c_ushort(0)
-        libusbpt104.UsbPt104SetMains(self._handle, sixty_hertz)
-        return True
-
-    def _wait_for_conversion(self, channel):
-        """wait until the adc cionversion is finished
-
-        :param channel: channel number (Channels)
-        :return:
-        """
-        conversion_time = self.active_channel_count * 0.75
-        last_query = self.channels[channel]['last_query']
-        while last_query + conversion_time > time():
-            pass
-        return True
-
-    def scale_value(self, value, channel):
-        """scales the value from the device.
-
-        :param value: value to convert as float
-        :param channel: channel number (Channels)
-        :return: Temperature in °C, Resistance in mOhm, Voltage in mV
-        """
-        if self.channels[channel]['data_type'] in [DataTypes.PT100, DataTypes.PT1000]:
-            return value / 10.0 ** 3  # °C
-        if self.channels[channel]['data_type'] == DataTypes.RESISTANCE_TO_375R:
-            return value / 10.0 ** 3  # mOhm
-        if self.channels[channel]['data_type'] == DataTypes.RESISTANCE_TO_10K:
-            return value  # mOhm
-        if self.channels[channel]['data_type'] in [DataTypes.DIFFERENTIAL_TO_115MV, DataTypes.SINGLE_ENDED_TO_115MV]:
-            return value / 10.0 ** 9  # mV
-        if self.channels[channel]['data_type'] in [DataTypes.DIFFERENTIAL_TO_2500MV,
-                                                   DataTypes.SINGLE_ENDED_TO_2500MV]:
-            return value / 10.0 ** 8  # mV
+        self.interface.set_mains(self.id, sixty_hertz)
