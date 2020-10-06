@@ -46,6 +46,11 @@ __docformat__ = 'reStructuredText'
 
 import time
 from enum import IntEnum
+import logging
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class CtypesEnum(IntEnum):
@@ -307,8 +312,12 @@ class Channel:
         self._data_type = data_type
         self._wires = wires
         self.low_pass_filter = low_pass_filter
-        self._updated = False
-        self._last_query = None
+        self._next_query = None
+        self._is_active = False
+
+    @property
+    def is_active(self):
+        return self._is_active
 
     @property
     def data_type(self):
@@ -317,7 +326,6 @@ class Channel:
     @data_type.setter
     def data_type(self, value):
         if self._data_type != value:
-            self._updated = False
             self._data_type = value
 
     @property
@@ -327,7 +335,6 @@ class Channel:
     @wires.setter
     def wires(self, value):
         if self._wires != value:
-            self._updated = False
             self._wires = value
 
     @property
@@ -336,7 +343,7 @@ class Channel:
 
     @property
     def value(self):
-        if not self._updated:
+        if not self._is_active:
             raise PicoException(
                 PicoStatus.PICO_INVALID_CHANNEL, self.logger.id,
                 f'Channel: {self.number}'
@@ -351,45 +358,33 @@ class Channel:
         self._wait_for_conversion()
 
         value = self.logger.get_value(self.number, self.low_pass_filter)
-        return value * self._factor()
-
-    def updated(self):
-        self._updated = True
-        self._last_query = time.time()
+        return value
 
     def _wait_for_conversion(self):
-        """wait until the adc cionversion is finished
+        """wait until a new adc conversion is avalaible
 
         :param channel: channel number (Channels)
         :return:
         """
-        conversion_time = self.logger.active_channel_count * 0.75
-        while self._last_query + conversion_time > time.time():
-            time.sleep(0.001)
-        self._last_query = time.time()
+        while time.time() < self._next_query:
+            time.sleep(0.01)
+        self._next_query = (time.time() +
+                            self.logger.active_channels_count * 0.75)
 
-    def _factor(self):
-        """scales the value from the device.
+    def activate(self):
+        self.logger.activate_channel(self.number)
+        self._next_query = (time.time() + max(3,
+                            1.7 * self.logger.active_channels_count))
+        self._is_active = self.data_type != DataTypes.OFF
 
-        :param value: value to convert as float
-        :param channel: channel number (Channels)
-        :return: Temperature in °C, Resistance in mOhm, Voltage in mV
-        """
-        if self.data_type in [DataTypes.PT100, DataTypes.PT1000,
-                              DataTypes.RESISTANCE_TO_375R]:
-            return 1E-3
-        if self.data_type == DataTypes.RESISTANCE_TO_10K:
-            return 1.0
-        if self.data_type in [DataTypes.DIFFERENTIAL_TO_115MV,
-                              DataTypes.SINGLE_ENDED_TO_115MV]:
-            return 1E-9  # mV
-        if self.data_type in [DataTypes.DIFFERENTIAL_TO_2500MV,
-                              DataTypes.SINGLE_ENDED_TO_2500MV]:
-            return 1E-8  # mV
+    def deactivate(self):
+        self.logger.deactivate_channel(self.number)
+        self._is_active = False
 
 
 class PT104:
-    def __init__(self, interface=None):
+    def __init__(self, conn_string, interface=None):
+        self._conn_string = conn_string
         self.interface = interface
         self.channels = {
             key: Channel(self, key)
@@ -397,8 +392,6 @@ class PT104:
         }
         self.id = None
         self._info = {}
-
-        self.is_converting = False
 
     @property
     def info(self):
@@ -419,7 +412,7 @@ class PT104:
         """
         return self.id is not None
 
-    def connect(self, conn_string=None):
+    def connect(self):
         """Connect to a PT-104A data acquisition module via USB or Ethernet
 
         .. note:: Ethernet connection is not implemented
@@ -428,15 +421,15 @@ class PT104:
         :return: connection status
         """
 
-        self.id = self.interface.open_unit(conn_string)
+        self.id = self.interface.open_unit(self._conn_string)
 
     @property
-    def active_channel_count(self):
+    def active_channels_count(self):
         """return the number of active channels
 
         :return: number of active channels
         """
-        return sum([channel.data_type != DataTypes.OFF
+        return sum([channel.is_active
                     for channel in self.channels.values()])
 
     def disconnect(self):
@@ -451,6 +444,10 @@ class PT104:
         self.id = None
         self._info = {}
 
+    def _assure_is_connected(self):
+        if not self.is_connected:
+            self.connect()
+
     def get_value(self, channel, lower_pass_filter=False):
         """queries the measurement value directly from inteface
 
@@ -458,23 +455,24 @@ class PT104:
         :param raw_value: skip conversion
         :return: measured value
         """
-        if not self.is_connected:
-            raise PicoException(PicoStatus.PICO_NOT_FOUND, self.id)
-        if not self.is_converting:
-            self.convert()
-
+        self._assure_is_connected()
         return self.interface.get_value(self.id, channel,
                                         lower_pass_filter)
 
-    def convert(self):
-        self.interface.convert(self.id, self.channels.values())
-        for channel in self.channels.values():
-            channel.updated()
-        self.is_converting = True
-        print(f'Active channels are {self.active_channel_count}')
-        time.sleep(1.5 * self.active_channel_count)
+    def activate_channel(self, channel_number):
+        self._assure_is_connected()
+        channel = self.channels[channel_number]
+        self.interface.set_channel(self.id, channel.number, channel.data_type,
+                                   channel.wires)
+
+    def deactivate_channel(self, channel_number):
+        self._assure_is_connected()
+        channel = self.channels[channel_number]
+        self.interface.set_channel(self.id, channel.number, DataTypes.OFF,
+                                   channel.wires)
 
     def set_mains(self, sixty_hertz=False):
+        self._assure_is_connected()
         """This function is used to inform the driver of the local mains (line) frequency.
 
         This helps the driver to filter out electrical noise.
@@ -483,3 +481,11 @@ class PT104:
         :return: success
         """
         self.interface.set_mains(self.id, sixty_hertz)
+
+    def clear(self):
+        for channel in self.channels.values():
+            if channel.is_active:
+                channel.deactivate()
+
+    def __del__(self):
+        self.clear()

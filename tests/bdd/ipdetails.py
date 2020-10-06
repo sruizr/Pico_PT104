@@ -15,20 +15,15 @@ dev_3 = PT104(interface)
 
 
 dev_1.connect(SN_1)
+print(dev_1.interface.get_ip_details(dev_1.id))
 print(dev_1.info)
-dev_1.channels[1].data_type = DataTypes.PT100
-dev_1.channels[1].wires = Wires.WIRES_4
-dev_1.channels[1].lower_pass_filter = True
-dev_1.convert()
-
 
 dev_2.connect(SN_2)
-dev_2.channels[2].data_type = DataTypes.PT100
-dev_2.channels[2].wires = Wires.WIRES_4
-dev_2.convert()
+print(dev_2.interface.get_ip_details(dev_2.id))
 print(dev_2.info)
 
 dev_3.connect(SN_3)
+print(dev_3.interface.get_ip_details(dev_3.id))
 print(dev_3.info)
 
 

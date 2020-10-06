@@ -39,13 +39,26 @@ else:
     # out electrical noise.
     libusbpt104.UsbPt104SetMains.argtypes = [c.c_short, c.c_ushort]
 
+    libusbpt104.UsbPt104IpDetails.argtypes = [c.c_short, c.POINTER(c.c_short),
+                                              c.POINTER(c.c_char),
+                                              c.POINTER(c.c_long),
+                                              c.POINTER(c.c_long), c.c_short]
 
-class USBinteface:
+
+class _USBinterface:
     """Interface between connection and PT104 using a USB
     """
     _HANDLES = {}
+    _FACTORS = {}
 
-    def discover_devices(communication_type=CommunicationType.CT_USB):
+    def __init__(self):
+        devices = self.discover_devices()
+        devices = [device[4:] for device in devices if device[:4] == 'USB:']
+        while devices:
+            self.open_unit(devices.pop())
+
+    @classmethod
+    def discover_devices(cls, communication_type=CommunicationType.CT_USB):
         """This function returns a list of all the attached PT-104 devices of the specified port type
 
         :param communication_type: type of the devices to discover (COMMUNICATION_TYPE)
@@ -56,7 +69,8 @@ class USBinteface:
 
         libusbpt104.UsbPt104Enumerate(enum_string, enum_len,
                                       communication_type)
-        return enum_string.value
+        enum  = enum_string.value.decode().split(',')
+        return enum
 
     def _get_handle(self, batch_and_serial):
         handle = self._HANDLES.get(batch_and_serial)
@@ -65,31 +79,69 @@ class USBinteface:
         return handle
 
     def open_unit(self, batch_and_serial):
+        if batch_and_serial in self._HANDLES:
+            return batch_and_serial
+
         handle = c.c_short()
         serial = (batch_and_serial.encode() if type(batch_and_serial) is str
                   else batch_and_serial)
         status = libusbpt104.UsbPt104OpenUnit(c.byref(handle), serial)
         if status != 0:
             raise PicoException(status, batch_and_serial)
-        self._HANDLES[batch_and_serial] = handle
 
+        handles = [handle.value for handle in  self._HANDLES.values()]
+        if handle.value in handles:  # Handle is repeated driver
+            raise PicoException(PicoStatus.PICO_NOT_FOUND, batch_and_serial)
+        else:
+            self._HANDLES[batch_and_serial] = handle
+
+        self._FACTORS[batch_and_serial] = [1] * 4
         return batch_and_serial
 
+    def get_ip_details(self, batch_and_serial):
+        handle = self._get_handle(batch_and_serial)
+        idt_get = c.c_short(0)
+        enabled = c.c_short()
+
+        ip_address = c.create_string_buffer(256)
+        address_len = c.c_long()
+        port = c.c_long()
+
+        libusbpt104.UsbPt104IpDetails(handle, c.byref(enabled), ip_address,
+                                      c.byref(address_len), c.byref(port),
+                                      idt_get)
+        return {'ip_address': ip_address.value,
+                'len': address_len.value,
+                'port': port.value,
+                'enabled': enabled.value == 1}
+
+    def set_ip_details(self, batch_and_serial, ip_address, port):
+        pass
+
+    def disable_ip(self, batch_and_serial):
+        pass
+
+    def enable_ip(self, batch_and_serial):
+        pass_
+
     def close_unit(self, batch_and_serial):
-        handle = self._get_conn(batch_and_serial)
+        handle = self._get_handle(batch_and_serial)
         status = libusbpt104.UsbPt104CloseUnit(handle)
         if status != 0:
             raise PicoException(status)
 
-    def convert(self, batch_and_serial, channels):
+    def set_channel(self, batch_and_serial, channel_number, data_type, wires):
         handle = self._get_handle(batch_and_serial)
-        for channel in channels:
-            status = libusbpt104.UsbPt104SetChannel(
-                handle, channel.number, channel.data_type, channel.wires
-            )
-            if status != 0:
-                raise PicoException(status, batch_and_serial,
-                                    f'Setting channel {channel.number}')
+        status = libusbpt104.UsbPt104SetChannel(
+            handle, channel_number, data_type, wires
+        )
+        if status != 0:
+            raise PicoException(status, batch_and_serial,
+                                f'Setting channel {channel_number}')
+
+        self._FACTORS[batch_and_serial][channel_number - 1] = self._get_factor(
+            data_type
+        )
 
     def get_value(self, batch_and_serial, channel, low_pass_filter=False):
         measurement = c.c_long()
@@ -100,7 +152,28 @@ class USBinteface:
         if status_channel != 0:
             raise PicoException(status_channel, batch_and_serial)
 
-        return measurement.value
+        return measurement.value * self._FACTORS[batch_and_serial][channel - 1]
+
+    def _get_factor(self, data_type):
+        """scales the value from the device.
+
+        :param value: value to convert as float
+        :param channel: channel number (Channels)
+        :return: Temperature in °C, Resistance in mOhm, Voltage in mV
+        """
+        if data_type in [DataTypes.PT100, DataTypes.PT1000,
+                         DataTypes.RESISTANCE_TO_375R]:
+            return 1E-3
+        if data_type == DataTypes.RESISTANCE_TO_10K:
+            return 1.0
+        if data_type in [DataTypes.DIFFERENTIAL_TO_115MV,
+                         DataTypes.SINGLE_ENDED_TO_115MV]:
+            return 1E-9  # mV
+        if data_type in [DataTypes.DIFFERENTIAL_TO_2500MV,
+                         DataTypes.SINGLE_ENDED_TO_2500MV]:
+            return 1E-8  # mV
+        if data_type == DataTypes.OFF:
+            return 0
 
     def set_mains(self, batch_and_serial, sixty_hertz=False):
         handle = self._get_handle(batch_and_serial)
@@ -132,3 +205,6 @@ class USBinteface:
 
         return {key: self._get_info(handle, value)
                 for key, value in info.items()}
+
+
+usb_interface = _USBinterface()
