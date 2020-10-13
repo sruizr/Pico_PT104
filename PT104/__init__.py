@@ -489,3 +489,4 @@ class PT104:
 
     def __del__(self):
         self.clear()
+        self.interface.close_unit(self.id)
